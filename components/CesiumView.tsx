@@ -37,6 +37,14 @@ const TDT_URL = "https://t{s}.tianditu.gov.cn/";
 // Plane image URL from public folder
 const planeImageUrl = "/plane.png";
 
+// Set default home view to Luojiang, Quanzhou (closer zoom)
+Cesium.Camera.DEFAULT_VIEW_RECTANGLE = Cesium.Rectangle.fromDegrees(
+  118.655,
+  25.085, // West, South
+  118.675,
+  25.1 // East, North
+);
+
 export const CesiumView: React.FC<CesiumViewProps> = ({
   waypoints,
   simulatedPath,
@@ -47,7 +55,7 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
   flightSpeed = DEFAULT_SPEED,
 }) => {
   const viewerRef = useRef<Cesium.Viewer | null>(null);
-  const wtfsRef = useRef<any>(null); // Reference for Tianditu 3D Place Names
+  const wtfsRef = useRef<any>(null);
   const [pluginsLoaded, setPluginsLoaded] = useState(false);
 
   // Convert waypoints to Cartesian3 array for the line
@@ -64,18 +72,6 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
     );
   }, [simulatedPath]);
 
-  // Tianditu Imagery Provider (Satellite) - img_w (Spherical Mercator)
-  const imgProvider = useMemo(
-    () =>
-      new Cesium.UrlTemplateImageryProvider({
-        url: `${TDT_URL}DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${TDT_TOKEN}`,
-        subdomains: TDT_SUBDOMAINS,
-        tilingScheme: new Cesium.WebMercatorTilingScheme(),
-        maximumLevel: 18,
-      }),
-    []
-  );
-
   // Tianditu Annotation Provider (Labels) - cia_w
   const ciaProvider = useMemo(
     () =>
@@ -90,14 +86,12 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
 
   // 1. Initialize Global Cesium and Load Scripts
   useEffect(() => {
-    // CRITICAL: Tianditu plugins expect 'Cesium' to be on the window object.
     if (!(window as any).Cesium) {
       (window as any).Cesium = Cesium;
     }
 
     const loadScript = (src: string) => {
-      return new Promise((resolve, reject) => {
-        // Check if script already exists to prevent duplicates
+      return new Promise((resolve) => {
         if (document.querySelector(`script[src="${src}"]`)) {
           resolve(true);
           return;
@@ -105,22 +99,16 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
         const script = document.createElement("script");
         script.src = src;
         script.type = "text/javascript";
-        // User example had 'cesium="true"', might be used by the loader to find base path
         script.setAttribute("cesium", "true");
-        script.async = false; // Important for order if appended quickly
+        script.async = false;
         script.onload = () => resolve(true);
-        script.onerror = (e) => {
-          console.error(`Failed to load ${src}`, e);
-          // We resolve anyway so other scripts might try to load, or the app can continue without this plugin
-          resolve(false);
-        };
+        script.onerror = () => resolve(false);
         document.head.appendChild(script);
       });
     };
 
     const initScripts = async () => {
       try {
-        // Load dependencies in specific order
         await loadScript(
           "https://api.tianditu.gov.cn/cdn/plugins/cesium/long.min.js"
         );
@@ -130,28 +118,23 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
         await loadScript(
           "https://api.tianditu.gov.cn/cdn/plugins/cesium/protobuf.min.js"
         );
-
-        // Load the main extension
         await loadScript(
           "https://api.tianditu.gov.cn/cdn/plugins/cesium/Cesium_ext_min.js"
         );
-
-        console.log("Tianditu plugins scripts loaded.");
         setPluginsLoaded(true);
       } catch (error) {
-        console.error("Error during Tianditu script initialization:", error);
+        console.error("Error loading Tianditu scripts:", error);
       }
     };
 
     initScripts();
   }, []);
 
-  // 2. Initialize Terrain and WTFS (Labels) after scripts are loaded
+  // 2. Initialize Terrain and WTFS after scripts loaded
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !pluginsLoaded) return;
 
-    // --- Terrain Setup ---
     try {
       const GeoTerrainProvider = (Cesium as any).GeoTerrainProvider;
       if (GeoTerrainProvider) {
@@ -161,19 +144,12 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
             "mapservice/swdx?T=elv_c&tk=" +
             TDT_TOKEN
         );
-        const terrainProvider = new GeoTerrainProvider({
-          urls: terrainUrls,
-        });
-        viewer.terrainProvider = terrainProvider;
-        console.log("Tianditu Terrain initialized");
-      } else {
-        console.warn("GeoTerrainProvider not found on global Cesium object");
+        viewer.terrainProvider = new GeoTerrainProvider({ urls: terrainUrls });
       }
     } catch (e) {
       console.warn("Failed to init Terrain:", e);
     }
 
-    // --- WTFS Setup (3D Place Names) ---
     try {
       const GeoWTFS = (Cesium as any).GeoWTFS;
       if (GeoWTFS && !wtfsRef.current) {
@@ -202,23 +178,14 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
             showBackground: false,
             pixelOffset: new Cesium.Cartesian2(5, 5),
           },
-          billboardGraphics: {
-            width: 18,
-            height: 18,
-          },
+          billboardGraphics: { width: 18, height: 18 },
         });
-
-        wtfs.getTileUrl = function () {
-          return (
-            TDT_URL +
-            "mapservice/GetTiles?lxys={z},{x},{y}&VERSION=1.0.0&tk=" +
-            TDT_TOKEN
-          );
-        };
-        wtfs.getIcoUrl = function () {
-          return TDT_URL + "mapservice/GetIcon?id={id}&tk=" + TDT_TOKEN;
-        };
-
+        wtfs.getTileUrl = () =>
+          TDT_URL +
+          "mapservice/GetTiles?lxys={z},{x},{y}&VERSION=1.0.0&tk=" +
+          TDT_TOKEN;
+        wtfs.getIcoUrl = () =>
+          TDT_URL + "mapservice/GetIcon?id={id}&tk=" + TDT_TOKEN;
         wtfs.initTDT([
           {
             x: 6,
@@ -251,14 +218,35 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
             boundBox: { minX: 45, minY: 0, maxX: 90, maxY: 45 },
           },
         ]);
-
         wtfsRef.current = wtfs;
-        console.log("Tianditu WTFS initialized");
       }
     } catch (e) {
       console.warn("Failed to init WTFS:", e);
     }
   }, [pluginsLoaded]);
+
+  // 3. Set default imagery to ArcGIS World Imagery
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+
+    // Small delay to ensure baseLayerPicker is fully initialized
+    const timer = setTimeout(() => {
+      const imageryViewModels =
+        viewer.baseLayerPicker?.viewModel?.imageryProviderViewModels;
+      if (imageryViewModels) {
+        const arcgisModel = imageryViewModels.find(
+          (vm: any) =>
+            vm.name && (vm.name.includes("ESRI") || vm.name.includes("ArcGIS"))
+        );
+        if (arcgisModel) {
+          viewer.baseLayerPicker.viewModel.selectedImagery = arcgisModel;
+        }
+      }
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, []);
 
   // Prepare Animation Properties
   const { positionProperty, rotationProperty, startTime, stopTime } =
@@ -375,138 +363,180 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
     }
   };
 
+  // Fly to Luojiang
+  const flyToLuojiang = () => {
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(
+        DEFAULT_CAMERA.destination.lon,
+        DEFAULT_CAMERA.destination.lat,
+        DEFAULT_CAMERA.destination.height
+      ),
+      duration: 1.5,
+    });
+  };
+
   return (
-    <Viewer
-      full
-      ref={(e) => {
-        if (e && e.cesiumElement) viewerRef.current = e.cesiumElement;
-      }}
-      timeline={true}
-      animation={true}
-      baseLayerPicker={true}
-      imageryProvider={imgProvider} // Sets the BASE layer. This should work even if plugins fail.
-      vrButton={false}
-      geocoder={false}
-      homeButton={true}
-      infoBox={false}
-      sceneModePicker={false}
-      navigationHelpButton={false}
-    >
-      {/* Tianditu Annotation Layer (Labels) - Placed ON TOP of base layer */}
-      <ImageryLayer imageryProvider={ciaProvider} />
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      {/* Custom Fly to Luojiang Button */}
+      <button
+        onClick={flyToLuojiang}
+        style={{
+          position: "absolute",
+          top: "10px",
+          left: "10px",
+          zIndex: 1000,
+          padding: "8px 16px",
+          backgroundColor: "#3b82f6",
+          color: "white",
+          border: "none",
+          borderRadius: "6px",
+          cursor: "pointer",
+          fontSize: "14px",
+          fontWeight: 500,
+          boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+        }}
+      >
+        返回洛江
+      </button>
+      <Viewer
+        full
+        ref={(e) => {
+          if (e && e.cesiumElement) viewerRef.current = e.cesiumElement;
+        }}
+        timeline={true}
+        animation={true}
+        baseLayerPicker={true}
+        vrButton={false}
+        geocoder={false}
+        homeButton={false}
+        infoBox={false}
+        sceneModePicker={false}
+        navigationHelpButton={false}
+      >
+        {/* Tianditu Annotation Layer */}
+        <ImageryLayer imageryProvider={ciaProvider} />
 
-      <CameraFlyTo
-        destination={Cesium.Cartesian3.fromDegrees(
-          DEFAULT_CAMERA.destination.lon,
-          DEFAULT_CAMERA.destination.lat,
-          DEFAULT_CAMERA.destination.height
-        )}
-        duration={2}
-        once={true}
-      />
-
-      <ScreenSpaceEventHandler>
-        <ScreenSpaceEvent
-          action={handleLeftClick}
-          type={Cesium.ScreenSpaceEventType.LEFT_CLICK}
+        <CameraFlyTo
+          destination={Cesium.Cartesian3.fromDegrees(
+            DEFAULT_CAMERA.destination.lon,
+            DEFAULT_CAMERA.destination.lat,
+            DEFAULT_CAMERA.destination.height
+          )}
+          duration={2}
+          once={true}
         />
-      </ScreenSpaceEventHandler>
 
-      {/* Render Main Waypoints */}
-      {!isSimulating &&
-        waypoints.map((wp, index) => (
-          <Entity
-            key={wp.id}
-            position={Cesium.Cartesian3.fromDegrees(wp.lon, wp.lat, wp.alt)}
-            name={`航点 ${index + 1}`}
-            description={
-              wp.type === WaypointType.ORBIT
-                ? `环绕半径: ${wp.orbitRadius}m`
-                : "普通飞越"
-            }
-          >
-            <PointGraphics
-              pixelSize={selectedId === wp.id ? 20 : 12}
-              color={
-                selectedId === wp.id
-                  ? Cesium.Color.fromCssColorString("#f59e0b")
-                  : wp.type === WaypointType.ORBIT
-                  ? Cesium.Color.fromCssColorString("#ef4444")
-                  : Cesium.Color.fromCssColorString("#3b82f6")
+        <ScreenSpaceEventHandler>
+          <ScreenSpaceEvent
+            action={handleLeftClick}
+            type={Cesium.ScreenSpaceEventType.LEFT_CLICK}
+          />
+        </ScreenSpaceEventHandler>
+
+        {/* Render Main Waypoints */}
+        {!isSimulating &&
+          waypoints.map((wp, index) => (
+            <Entity
+              key={wp.id}
+              position={Cesium.Cartesian3.fromDegrees(wp.lon, wp.lat, wp.alt)}
+              name={`航点 ${index + 1}`}
+              description={
+                wp.type === WaypointType.ORBIT
+                  ? `环绕半径: ${wp.orbitRadius}m`
+                  : "普通飞越"
               }
-              outlineColor={Cesium.Color.WHITE}
-              outlineWidth={2}
+            >
+              <PointGraphics
+                pixelSize={selectedId === wp.id ? 20 : 12}
+                color={
+                  selectedId === wp.id
+                    ? Cesium.Color.fromCssColorString("#f59e0b")
+                    : wp.type === WaypointType.ORBIT
+                    ? Cesium.Color.fromCssColorString("#ef4444")
+                    : Cesium.Color.fromCssColorString("#3b82f6")
+                }
+                outlineColor={Cesium.Color.WHITE}
+                outlineWidth={2}
+              />
+              {wp.type === WaypointType.ORBIT && (
+                <Entity
+                  position={Cesium.Cartesian3.fromDegrees(
+                    wp.lon,
+                    wp.lat,
+                    wp.alt
+                  )}
+                >
+                  <PolylineGraphics
+                    positions={(() => {
+                      const points = [];
+                      for (let i = 0; i <= 360; i += 5) {
+                        const rad = Cesium.Math.toRadians(i);
+                        const latRad = Cesium.Math.toRadians(wp.lat);
+                        const dLat = (wp.orbitRadius * Math.cos(rad)) / 111320;
+                        const dLon =
+                          (wp.orbitRadius * Math.sin(rad)) /
+                          (111320 * Math.cos(latRad));
+                        points.push(
+                          Cesium.Cartesian3.fromDegrees(
+                            wp.lon + dLon,
+                            wp.lat + dLat,
+                            wp.alt
+                          )
+                        );
+                      }
+                      return points;
+                    })()}
+                    material={Cesium.Color.ORANGE.withAlpha(0.6)}
+                    width={2}
+                  />
+                </Entity>
+              )}
+            </Entity>
+          ))}
+
+        {/* Render Planned Path */}
+        {!isSimulating && (
+          <Entity>
+            <PolylineGraphics
+              positions={positions}
+              width={2}
+              material={
+                new Cesium.PolylineDashMaterialProperty({
+                  color: Cesium.Color.CYAN,
+                  dashLength: 16,
+                })
+              }
             />
-            {wp.type === WaypointType.ORBIT && (
-              <Entity
-                position={Cesium.Cartesian3.fromDegrees(wp.lon, wp.lat, wp.alt)}
-              >
-                <PolylineGraphics
-                  positions={(() => {
-                    const points = [];
-                    for (let i = 0; i <= 360; i += 5) {
-                      const rad = Cesium.Math.toRadians(i);
-                      const latRad = Cesium.Math.toRadians(wp.lat);
-                      const dLat = (wp.orbitRadius * Math.cos(rad)) / 111320;
-                      const dLon =
-                        (wp.orbitRadius * Math.sin(rad)) /
-                        (111320 * Math.cos(latRad));
-                      points.push(
-                        Cesium.Cartesian3.fromDegrees(
-                          wp.lon + dLon,
-                          wp.lat + dLat,
-                          wp.alt
-                        )
-                      );
-                    }
-                    return points;
-                  })()}
-                  material={Cesium.Color.ORANGE.withAlpha(0.6)}
-                  width={2}
-                />
-              </Entity>
-            )}
           </Entity>
-        ))}
+        )}
 
-      {/* Render Planned Path */}
-      {!isSimulating && (
-        <Entity>
-          <PolylineGraphics
-            positions={positions}
-            width={2}
-            material={
-              new Cesium.PolylineDashMaterialProperty({
-                color: Cesium.Color.CYAN,
-                dashLength: 16,
-              })
-            }
-          />
-        </Entity>
-      )}
+        {/* Render Simulated Path */}
+        {simPositions.length > 0 && (
+          <Entity name="真实航迹">
+            <PolylineGraphics
+              positions={simPositions}
+              width={4}
+              material={Cesium.Color.fromCssColorString("#10b981").withAlpha(
+                0.6
+              )}
+            />
+          </Entity>
+        )}
 
-      {/* Render Simulated Path */}
-      {simPositions.length > 0 && (
-        <Entity name="真实航迹">
-          <PolylineGraphics
-            positions={simPositions}
-            width={4}
-            material={Cesium.Color.fromCssColorString("#10b981").withAlpha(0.6)}
-          />
-        </Entity>
-      )}
-
-      {/* Render Drone Entity */}
-      {isSimulating && positionProperty && rotationProperty && (
-        <Entity position={positionProperty} name="模拟无人机">
-          <BillboardGraphics
-            image={planeImageUrl}
-            scale={0.15}
-            rotation={rotationProperty as any}
-            alignedAxis={Cesium.Cartesian3.UNIT_Z}
-          />
-        </Entity>
-      )}
-    </Viewer>
+        {/* Render Drone Entity */}
+        {isSimulating && positionProperty && rotationProperty && (
+          <Entity position={positionProperty} name="模拟无人机">
+            <BillboardGraphics
+              image={planeImageUrl}
+              scale={0.15}
+              rotation={rotationProperty as any}
+              alignedAxis={Cesium.Cartesian3.UNIT_Z}
+            />
+          </Entity>
+        )}
+      </Viewer>
+    </div>
   );
 };

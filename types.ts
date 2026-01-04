@@ -30,11 +30,11 @@ export const DEFAULT_ORBIT_POINTS = 36; // Legacy default
 export const DEFAULT_ORBIT_LAPS = 1;
 export const DEFAULT_SPEED = 10; // m/s
 
-// Luojiang, Quanzhou, Fujian
+// Luojiang District, Quanzhou, Fujian
 export const DEFAULT_CAMERA = {
   destination: {
-    lat: 24.956,
-    lon: 118.666,
+    lat: 24.93418,
+    lon: 118.65280,
     height: 1500
   }
 };
