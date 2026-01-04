@@ -1,10 +1,10 @@
 import * as Cesium from "cesium";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BillboardGraphics,
   CameraFlyTo,
   Entity,
   ImageryLayer,
+  PlaneGraphics,
   PointGraphics,
   PolylineGraphics,
   ScreenSpaceEvent,
@@ -249,12 +249,12 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
   }, []);
 
   // Prepare Animation Properties
-  const { positionProperty, rotationProperty, startTime, stopTime } =
+  const { positionProperty, orientationProperty, startTime, stopTime } =
     useMemo(() => {
       if (!isSimulating || simulatedPath.length < 2) {
         return {
           positionProperty: undefined,
-          rotationProperty: undefined,
+          orientationProperty: undefined,
           startTime: undefined,
           stopTime: undefined,
         };
@@ -264,17 +264,48 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
       let currentSeconds = 0;
 
       const posProp = new Cesium.SampledPositionProperty();
-      const rotProp = new Cesium.SampledProperty(Number);
+      const orientProp = new Cesium.SampledProperty(Cesium.Quaternion);
       posProp.setInterpolationOptions({
         interpolationDegree: 1,
         interpolationAlgorithm: Cesium.LinearApproximation,
       });
-      rotProp.setInterpolationOptions({
+      orientProp.setInterpolationOptions({
         interpolationDegree: 1,
         interpolationAlgorithm: Cesium.LinearApproximation,
       });
 
       const SPEED = Math.max(0.1, flightSpeed);
+
+      // 累积旋转角度，确保角度连续性，避免跨越0°/360°边界时走长路
+      // 初始值设为第一个点的heading
+      let cumulativeRotation = simulatedPath[0].heading;
+      let lastHeading = simulatedPath[0].heading;
+
+      /**
+       * 计算最短角度差（-180° 到 180°）
+       */
+      const shortestAngleDiff = (from: number, to: number): number => {
+        let diff = to - from;
+        // 规范化到 -180° 到 180° 之间
+        while (diff > 180) diff -= 360;
+        while (diff < -180) diff += 360;
+        return diff;
+      };
+
+      /**
+       * 根据位置和航向计算姿态四元数（保持水平）
+       */
+      const computeOrientation = (
+        position: Cesium.Cartesian3,
+        headingDeg: number
+      ): Cesium.Quaternion => {
+        const hpr = new Cesium.HeadingPitchRoll(
+          Cesium.Math.toRadians(headingDeg),
+          0, // pitch = 0 保持水平
+          0 // roll = 0 无侧倾
+        );
+        return Cesium.Transforms.headingPitchRollQuaternion(position, hpr);
+      };
 
       for (let i = 0; i < simulatedPath.length; i++) {
         const pt = simulatedPath[i];
@@ -299,18 +330,29 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
         );
         posProp.addSample(time, position);
 
-        const billboardRot = -Cesium.Math.toRadians(pt.heading);
+        // 计算累积旋转角度（确保最短路径）
+        const angleDiff = shortestAngleDiff(lastHeading, pt.heading);
+        cumulativeRotation += angleDiff;
+        lastHeading = pt.heading;
+
+        // 计算姿态四元数
+        const orientation = computeOrientation(position, cumulativeRotation);
+
         if (i > 0 && !pt.isOrbit && !simulatedPath[i - 1].isOrbit) {
-          const prevHeading = simulatedPath[i - 1].heading;
-          const prevRot = -Cesium.Math.toRadians(prevHeading);
+          // 对于非环绕点之间的过渡，保持前一个朝向一小段时间
+          const prevCumulativeRot = cumulativeRotation - angleDiff;
           const holdTime = Cesium.JulianDate.addSeconds(
             start,
             currentSeconds - 0.2,
             new Cesium.JulianDate()
           );
-          rotProp.addSample(holdTime, prevRot);
+          const prevOrientation = computeOrientation(
+            position,
+            prevCumulativeRot
+          );
+          orientProp.addSample(holdTime, prevOrientation);
         }
-        rotProp.addSample(time, billboardRot);
+        orientProp.addSample(time, orientation);
       }
 
       const stop = Cesium.JulianDate.addSeconds(
@@ -320,7 +362,7 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
       );
       return {
         positionProperty: posProp,
-        rotationProperty: rotProp,
+        orientationProperty: orientProp,
         startTime: start,
         stopTime: stop,
       };
@@ -526,13 +568,21 @@ export const CesiumView: React.FC<CesiumViewProps> = ({
         )}
 
         {/* Render Drone Entity */}
-        {isSimulating && positionProperty && rotationProperty && (
-          <Entity position={positionProperty} name="模拟无人机">
-            <BillboardGraphics
-              image={planeImageUrl}
-              scale={0.15}
-              rotation={rotationProperty as any}
-              alignedAxis={Cesium.Cartesian3.UNIT_Z}
+        {isSimulating && positionProperty && orientationProperty && (
+          <Entity
+            position={positionProperty}
+            orientation={orientationProperty as any}
+            name="模拟无人机"
+          >
+            <PlaneGraphics
+              plane={new Cesium.Plane(Cesium.Cartesian3.UNIT_Z, 0)}
+              dimensions={new Cesium.Cartesian2(30, 30)}
+              material={
+                new Cesium.ImageMaterialProperty({
+                  image: planeImageUrl,
+                  transparent: true,
+                })
+              }
             />
           </Entity>
         )}

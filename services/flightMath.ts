@@ -1,5 +1,5 @@
 import * as Cesium from 'cesium';
-import { Waypoint, SimulatedPoint, WaypointType, DEFAULT_SPEED } from '../types';
+import { DEFAULT_SPEED, SimulatedPoint, Waypoint, WaypointType } from '../types';
 
 /**
  * Calculates a point at a distance and bearing from a start point.
@@ -34,6 +34,13 @@ export const calculateBearing = (startLat: number, startLon: number, destLat: nu
             Math.sin(startLatRad) * Math.cos(destLatRad) * Math.cos(destLonRad - startLonRad);
   const brng = Math.atan2(y, x);
   return (Cesium.Math.toDegrees(brng) + 360) % 360;
+};
+
+/**
+ * 获取环绕轨道的起始点位置（angle=0的位置）
+ */
+const getOrbitEntryPoint = (orbitCenter: Waypoint): { lat: number; lon: number } => {
+  return getPointAtDistanceAndBearing(orbitCenter.lat, orbitCenter.lon, orbitCenter.orbitRadius, 0);
 };
 
 /**
@@ -91,7 +98,13 @@ export const generateSimulationPath = (waypoints: Waypoint[], speed: number = DE
       // Normal Waypoint
       let heading = 0;
       if (next) {
-        heading = calculateBearing(current.lat, current.lon, next.lat, next.lon);
+        // 如果下一个是环绕点，应该指向环绕轨道的起始点，而不是中心点
+        if (next.type === WaypointType.ORBIT) {
+          const orbitEntry = getOrbitEntryPoint(next);
+          heading = calculateBearing(current.lat, current.lon, orbitEntry.lat, orbitEntry.lon);
+        } else {
+          heading = calculateBearing(current.lat, current.lon, next.lat, next.lon);
+        }
       } else if (i > 0) {
          // Keep previous heading
          const prev = path[path.length - 1];
