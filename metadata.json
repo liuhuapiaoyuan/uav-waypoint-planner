@@ -1,0 +1,5 @@
+{
+  "name": "Quanzhou Drone Mission Planner",
+  "description": "A professional UAV waypoint editor based on Cesium. Features flight path planning, orbit mode configuration, and real-time trajectory simulation with yaw calculation.",
+  "requestFramePermissions": []
+}
