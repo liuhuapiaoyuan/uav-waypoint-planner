@@ -17,21 +17,10 @@
       /* Hide Cesium Credit if needed for clean UI, but respecting license is better. We'll style it smaller. */
       .cesium-viewer-bottom { bottom: 20px; left: 0; right: auto; pointer-events: none; }
       .cesium-credit-textContainer { display: none !important; } 
-    </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-    "cesium": "https://esm.sh/cesium@^1.136.0",
-    "resium": "https://esm.sh/resium@^1.19.2"
-  }
-}
-</script>
+    </style> 
 </head>
   <body>
     <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
   </body>
 </html>
